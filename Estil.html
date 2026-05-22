@@ -1,0 +1,248 @@
+<?php
+// Evitar el acceso directo al archivo por seguridad
+if ( ! defined( 'ABSPATH' ) ) {
+    exit;
+}
+
+add_action('wp_footer', 'agregar_widget_chat_gemini');
+
+function agregar_widget_chat_gemini() {
+    // -------------------------------------------------------------
+    // CONFIGURACIÓN: Pega aquí la URL que te dio ngrok en Colab
+    // Ej: 'https://a1b2-34-56-78.ngrok-free.app/chat'
+    // -------------------------------------------------------------
+    $url_api_colab = 'TU_URL_DE_NGROK_AQUÍ'; 
+    ?>
+
+    <!-- 1. DISEÑO DEL CHAT (HTML) -->
+    <div id="gemini-chat-container">
+        <!-- Burbuja flotante -->
+        <div id="gemini-chat-bubble" onclick="toggleGeminiChat()">
+            💬
+        </div>
+
+        <!-- Ventana de conversación -->
+        <div id="gemini-chat-window" class="gemini-chat-hidden">
+            <div id="gemini-chat-header">
+                <strong>Asistente IA</strong>
+                <span id="gemini-chat-close" onclick="toggleGeminiChat()">✖</span>
+            </div>
+            <div id="gemini-chat-messages">
+                <div class="gemini-msg bot-msg">¡Hola! ¿En qué puedo ayudarte hoy?</div>
+            </div>
+            <div id="gemini-chat-footer">
+                <input type="text" id="gemini-chat-input" placeholder="Escribe un mensaje..." onkeypress="checkGeminiEnter(event)">
+                <button id="gemini-chat-send" onclick="sendGeminiMessage()">Enviar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. ESTILOS VISUALES (CSS) -->
+    <style>
+        #gemini-chat-container {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 999999;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+        #gemini-chat-bubble {
+            width: 60px;
+            height: 60px;
+            background-color: #1a73e8;
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            cursor: pointer;
+            box-shadow: 0px 4px 15px rgba(0, 0, 0, 0.2);
+            transition: transform 0.2s ease;
+        }
+        #gemini-chat-bubble:hover {
+            transform: scale(1.05);
+        }
+        #gemini-chat-window {
+            width: 350px;
+            height: 450px;
+            background-color: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0px 5px 25px rgba(0,0,0,0.15);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            position: absolute;
+            bottom: 80px;
+            right: 0;
+            transition: all 0.3s ease;
+        }
+        .gemini-chat-hidden {
+            display: none !important;
+        }
+        #gemini-chat-header {
+            background-color: #1a73e8;
+            color: white;
+            padding: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        #gemini-chat-close {
+            cursor: pointer;
+            opacity: 0.8;
+        }
+        #gemini-chat-messages {
+            flex: 1;
+            padding: 15px;
+            overflow-y: auto;
+            background-color: #f8f9fa;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .gemini-msg {
+            max-width: 80%;
+            padding: 10px 14px;
+            border-radius: 15px;
+            font-size: 14px;
+            line-height: 1.4;
+            word-wrap: break-word;
+        }
+        .user-msg {
+            background-color: #e3f2fd;
+            color: #0d47a1;
+            align-self: flex-end;
+            border-bottom-right-radius: 2px;
+        }
+        .bot-msg {
+            background-color: #ffffff;
+            color: #333333;
+            align-self: flex-start;
+            border-bottom-left-radius: 2px;
+            border: 1px solid #e0e0e0;
+        }
+        .loading-msg {
+            color: #888;
+            font-style: italic;
+            background: none;
+            border: none;
+            padding: 5px;
+        }
+        #gemini-chat-footer {
+            display: flex;
+            padding: 10px;
+            background-color: #ffffff;
+            border-top: 1px solid #eeeeee;
+        }
+        #gemini-chat-input {
+            flex: 1;
+            border: 1px solid #cccccc;
+            border-radius: 20px;
+            padding: 8px 15px;
+            outline: none;
+            font-size: 14px;
+        }
+        #gemini-chat-send {
+            background-color: #1a73e8;
+            color: white;
+            border: none;
+            border-radius: 20px;
+            padding: 8px 15px;
+            margin-left: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 14px;
+        }
+        #gemini-chat-send:hover {
+            background-color: #155cb4;
+        }
+    </style>
+
+    <!-- 3. LÓGICA DE CONEXIÓN Y ANIMACIÓN (JAVASCRIPT) -->
+    <script>
+        const colabUrl = '<?php echo esc_url($url_api_colab); ?>';
+
+        function toggleGeminiChat() {
+            const chatWindow = document.getElementById('gemini-chat-window');
+            chatWindow.classList.toggle('gemini-chat-hidden');
+            scrollToBottom();
+        }
+
+        function checkGeminiEnter(event) {
+            if (event.key === 'Enter') {
+                sendGeminiMessage();
+            }
+        }
+
+        async function sendGeminiMessage() {
+            const inputElement = document.getElementById('gemini-chat-input');
+            const messageText = inputElement.value.trim();
+            
+            if (messageText === '') return;
+
+            // Limpiar input
+            inputElement.value = '';
+
+            // 1. Mostrar mensaje del usuario en pantalla
+            appendMessage(messageText, 'user-msg');
+            
+            // 2. Mostrar indicador de "Pensando..."
+            const loadingId = appendMessage('Escribiendo...', 'bot-msg loading-msg');
+            scrollToBottom();
+
+            try {
+                // 3. Petición POST directa al servidor FastAPI en Google Colab
+                const response = await fetch(colabUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ message: messageText })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Error en la respuesta del servidor');
+                }
+
+                const data = await response.json();
+                
+                // Quitar indicador de carga y mostrar respuesta de Gemini
+                removeMessage(loadingId);
+                appendMessage(data.reply, 'bot-msg');
+
+            } catch (error) {
+                console.error('Error:', error);
+                removeMessage(loadingId);
+                appendMessage('Lo siento, hubo un problema al conectar con el asistente. Asegúrate de que el servidor Colab esté activo.', 'bot-msg');
+            }
+            
+            scrollToBottom();
+        }
+
+        function appendMessage(text, className) {
+            const messagesContainer = document.getElementById('gemini-chat-messages');
+            const messageDiv = document.createElement('div');
+            const msgId = 'msg-' + Date.now();
+            
+            messageDiv.className = `gemini-msg ${className}`;
+            messageDiv.id = msgId;
+            // Reemplazar saltos de línea para que se vean bien en el HTML
+            messageDiv.innerHTML = text.replace(/\n/g, '<br>');
+            
+            messagesContainer.appendChild(messageDiv);
+            return msgId;
+        }
+
+        function removeMessage(id) {
+            const element = document.getElementById(id);
+            if (element) element.remove();
+        }
+
+        function scrollToBottom() {
+            const messagesContainer = document.getElementById('gemini-chat-messages');
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+    </script>
+    <?php
+}
